@@ -1,20 +1,30 @@
 ; =============================================================================
-; DRAGON 32/COCO RUBP PROTOCOL MODULE
-; 6809 Assembly - Message types in equates.asm
+; DRAGON 32/COCO RUBP PROTOCOL MODULE (6809)
 ; =============================================================================
+; RUBP v1 codec. Builds 64-byte messages into TX_BUFFER and parses them out of
+; RX_BUFFER. All working storage lives in the RAM map (equates.asm) so this
+; module is pure code + read-only data and can be assembled into a cartridge
+; ROM for the conformance harness as-is.
+;
+; The 6809 is big-endian, so the multi-byte header and payload fields store
+; straight to the wire with no byte-swapping — this is the first client whose
+; CPU endianness matches the protocol.
 
+; -----------------------------------------------------------------------------
+; rubp_init — reset the sequence counter.
+; -----------------------------------------------------------------------------
 rubp_init
-        clra
-        sta     rubp_seq
-        sta     last_recv_seq
+        ldd     #0
+        std     RUBP_SEQ
         rts
 
-rubp_seq        fcb     0
-last_recv_seq   fcb     0
-
+; -----------------------------------------------------------------------------
+; build_header — write the 16-byte RUBP v1 header into TX_BUFFER.
+; A = message type. Sequence is written big-endian then post-incremented.
+; -----------------------------------------------------------------------------
 build_header
-        sta     msg_type_temp
-        ldx     #tx_buffer
+        sta     MSG_TYPE_TEMP
+        ldx     #TX_BUFFER
         lda     #'R'
         sta     ,x+
         lda     #'A'
@@ -23,185 +33,270 @@ build_header
         sta     ,x+
         lda     #'H'
         sta     ,x+
-        lda     #$01
+        lda     #PROTOCOL_VER           ; version @4
         sta     ,x+
-        clra
+        lda     MSG_TYPE_TEMP           ; type @5
         sta     ,x+
-        lda     msg_type_temp
+        lda     RUBP_SEQ                ; sequence @6-7 (big-endian)
         sta     ,x+
-        clra
+        lda     RUBP_SEQ+1
+        sta     ,x+
+        ldd     RUBP_SEQ                ; post-increment 16-bit sequence
+        addd    #1
+        std     RUBP_SEQ
+        lda     RUBP_PLAYER_ID          ; playerID @8-9 (big-endian)
+        sta     ,x+
+        lda     RUBP_PLAYER_ID+1
+        sta     ,x+
+        lda     RUBP_GAME_ID            ; gameID @10-11 (big-endian)
+        sta     ,x+
+        lda     RUBP_GAME_ID+1
+        sta     ,x+
+        clra                            ; timestamp @12-15 = 0
         sta     ,x+
         sta     ,x+
-        lda     rubp_seq
-        sta     ,x+
-        inc     rubp_seq
-        lda     player_id
-        sta     ,x+
-        lda     player_id+1
-        sta     ,x+
-        lda     game_id
-        sta     ,x+
-        lda     game_id+1
-        sta     ,x+
-        clra
         sta     ,x+
         sta     ,x+
         rts
 
-msg_type_temp   fcb     0
-player_id       fdb     0
-game_id         fdb     0
+; -----------------------------------------------------------------------------
+; clear_payload — zero the 48-byte payload of TX_BUFFER.
+; -----------------------------------------------------------------------------
+clear_payload
+        ldx     #TX_BUFFER+PAYLOAD_START
+        ldb     #PAYLOAD_SIZE
+        clra
+cp_loop
+        sta     ,x+
+        decb
+        bne     cp_loop
+        rts
 
 ; -----------------------------------------------------------------------------
-; send_hello - Send HELLO message with player name and platform ID
+; write_obs_hash — write the Flags byte + ObservedStateHash into the payload.
+; B = payload offset of the Flags byte; the 8-byte hash follows at +1..+8.
+; If no state hash has been captured the (already-cleared) bytes stay zero.
+; -----------------------------------------------------------------------------
+write_obs_hash
+        lda     HASH_VALID
+        beq     woh_done
+        ldx     #TX_BUFFER+PAYLOAD_START
+        lda     #$01                    ; Flags bit0 = ObservedStateHash present
+        sta     b,x
+        ldy     #OBSERVED_HASH
+        lda     #8                      ; A = byte counter
+woh_loop
+        incb                            ; advance payload offset
+        pshs    a
+        lda     ,y+
+        sta     b,x
+        puls    a
+        deca
+        bne     woh_loop
+woh_done
+        rts
+
+; -----------------------------------------------------------------------------
+; send_hello — HELLO (0x01): player name, platform ID, spec version.
+; reconnectToken is left zero (the vintage fleet does not reclaim slots).
 ; -----------------------------------------------------------------------------
 send_hello
         lda     #MSG_HELLO
         jsr     build_header
+        jsr     clear_payload
 
-        ; Clear payload first
-        ldx     #tx_buffer+16
-        ldb     #48
-        clra
-sh_clear
-        sta     ,x+
-        decb
-        bne     sh_clear
-
-        ; Copy player name to payload bytes 0-15
-        ldx     #player_name
-        ldy     #tx_buffer+16
+        ldx     #player_name            ; name @0-15 (fixed 16 bytes)
+        ldy     #TX_BUFFER+PAYLOAD_START
         ldb     #16
 sh_name
         lda     ,x+
-        beq     sh_name_done    ; Stop at null terminator
         sta     ,y+
         decb
         bne     sh_name
-sh_name_done
 
-        ; Platform ID at payload bytes 16-17 (big-endian)
-        ; Dragon 32/64 = 0x00A0
-        lda     #PLATFORM_ID_HI
-        sta     tx_buffer+32    ; payload+16
+        lda     #PLATFORM_ID_HI         ; platformID @16-17 (big-endian)
+        sta     TX_BUFFER+PAYLOAD_START+16
         lda     #PLATFORM_ID_LO
-        sta     tx_buffer+33    ; payload+17
+        sta     TX_BUFFER+PAYLOAD_START+17
+        lda     #SPEC_VERSION_HI        ; specVersion @18-19 (big-endian)
+        sta     TX_BUFFER+PAYLOAD_START+18
+        lda     #SPEC_VERSION_LO
+        sta     TX_BUFFER+PAYLOAD_START+19
 
         jsr     net_send
         rts
 
-; Default player name (can be overwritten by input)
-player_name     fcc     /DRAGON/
-                fcb     0
-                rmb     9       ; Pad to 16 bytes total
+; Fixed 16-byte player name (the client's own; the host treats it as user data).
+player_name     fcc     "DRAGON"
+                fcb     0,0,0,0,0,0,0,0,0,0
 
-send_ready
-        lda     #MSG_READY
-        jsr     build_header
-        ldx     #tx_buffer+16
-        ldb     #48
-        clra
-sr_clear
-        sta     ,x+
+; -----------------------------------------------------------------------------
+; is_selected — A = hand position; returns A nonzero if that card is selected.
+; Reads the SELECTED_LO/HI bitmask. Clobbers B and X; preserves U.
+; -----------------------------------------------------------------------------
+is_selected
+        cmpa    #8
+        bhs     is_high
+        tfr     a,b
+        lda     SELECTED_LO
+        bra     is_shift
+is_high
+        suba    #8
+        tfr     a,b
+        lda     SELECTED_HI
+is_shift
+        tstb
+        beq     is_test
+is_sloop
+        lsra
         decb
-        bne     sr_clear
-        jsr     net_send
+        bne     is_sloop
+is_test
+        anda    #1
         rts
 
+; -----------------------------------------------------------------------------
+; send_play_cards — PLAY_CARD (0x04). Emits every card flagged in the
+; SELECTED_LO/HI bitmask, the nominated suit, spec version, and the observed
+; state hash. Payload: CardCount@0, Cards@1.., NominatedSuit@33,
+; SpecVersion@34-35, Flags@36, ObservedStateHash@37-44.
+; -----------------------------------------------------------------------------
 send_play_cards
-        stb     card_count_temp
         lda     #MSG_PLAY_CARDS
         jsr     build_header
-        lda     card_count_temp
-        sta     tx_buffer+16
-        lda     nominated_suit
-        sta     tx_buffer+17
-        clrb
-spc_copy
-        cmpb    card_count_temp
-        bhs     spc_pad
-        ldx     #card_play_buf
-        lda     b,x
-        ldx     #tx_buffer+18
-        sta     b,x
-        incb
-        bra     spc_copy
-spc_pad
-        cmpb    #8
+        jsr     clear_payload
+
+        ldu     #TX_BUFFER+PAYLOAD_START+1   ; U = card write pointer
+        clrb                                 ; B = hand position
+spc_loop
+        cmpb    HAND_COUNT
         bhs     spc_done
-        ldx     #tx_buffer+18
-        clra
-        sta     b,x
+        pshs    b
+        tfr     b,a
+        jsr     is_selected                  ; preserves U
+        puls    b
+        tsta
+        beq     spc_skip
+        ldx     #MY_HAND
+        lda     b,x
+        sta     ,u+                          ; append selected card
+spc_skip
         incb
-        bra     spc_pad
+        bra     spc_loop
 spc_done
-        ldx     #tx_buffer+26
-        ldb     #38
-        clra
-spc_clear
-        sta     ,x+
-        decb
-        bne     spc_clear
+        tfr     u,d                          ; CardCount = U - cards base
+        subd    #TX_BUFFER+PAYLOAD_START+1
+        tfr     b,a
+        sta     TX_BUFFER+PAYLOAD_START+0    ; CardCount @0
+
+        lda     NOMINATED_SUIT
+        sta     TX_BUFFER+PAYLOAD_START+33   ; NominatedSuit @33
+        lda     #SPEC_VERSION_HI
+        sta     TX_BUFFER+PAYLOAD_START+34   ; SpecVersion @34-35
+        lda     #SPEC_VERSION_LO
+        sta     TX_BUFFER+PAYLOAD_START+35
+        ldb     #36                          ; Flags @36 + hash @37-44
+        jsr     write_obs_hash
+
         jsr     net_send
         rts
 
-card_count_temp fcb     0
-nominated_suit  fcb     $FF
-card_play_buf   rmb     8
-
+; -----------------------------------------------------------------------------
+; send_draw — DRAW_CARD (0x05). A = reason (0=cannot play, 1=attack penalty).
+; Payload: Reason@0, Count@1, SpecVersion@2-3, Flags@4, ObservedStateHash@5-12.
+; -----------------------------------------------------------------------------
 send_draw
+        pshs    a                            ; save reason
         lda     #MSG_DRAW_CARD
         jsr     build_header
-        ldx     #tx_buffer+16
-        ldb     #48
-        clra
-sd_clear
-        sta     ,x+
-        decb
-        bne     sd_clear
+        jsr     clear_payload
+        puls    a
+        sta     TX_BUFFER+PAYLOAD_START+0    ; Reason @0
+        lda     #1
+        sta     TX_BUFFER+PAYLOAD_START+1    ; Count @1 (a manual draw is 1)
+        lda     #SPEC_VERSION_HI
+        sta     TX_BUFFER+PAYLOAD_START+2    ; SpecVersion @2-3
+        lda     #SPEC_VERSION_LO
+        sta     TX_BUFFER+PAYLOAD_START+3
+        ldb     #4                           ; Flags @4 + hash @5-12
+        jsr     write_obs_hash
+
         jsr     net_send
         rts
 
-receive_message
-        jsr     net_recv
-        bcs     rm_none
-        lda     rx_buffer
+; -----------------------------------------------------------------------------
+; rubp_validate — C clear if RX_BUFFER carries the RACH magic, C set otherwise.
+; -----------------------------------------------------------------------------
+rubp_validate
+        lda     RX_BUFFER
         cmpa    #'R'
-        bne     rm_invalid
-        lda     rx_buffer+1
+        bne     rv_bad
+        lda     RX_BUFFER+1
         cmpa    #'A'
-        bne     rm_invalid
-        lda     rx_buffer+2
+        bne     rv_bad
+        lda     RX_BUFFER+2
         cmpa    #'C'
-        bne     rm_invalid
-        lda     rx_buffer+3
+        bne     rv_bad
+        lda     RX_BUFFER+3
         cmpa    #'H'
-        bne     rm_invalid
-        lda     rx_buffer+9
-        sta     last_recv_seq
-        lda     rx_buffer+6
+        bne     rv_bad
         andcc   #$FE
         rts
-rm_invalid
-rm_none
-        clra
+rv_bad
         orcc    #$01
         rts
 
+; -----------------------------------------------------------------------------
+; get_message_type — A = the message type byte (@5).
+; -----------------------------------------------------------------------------
+get_message_type
+        lda     RX_BUFFER+HDR_TYPE
+        rts
+
+; -----------------------------------------------------------------------------
+; parse_welcome — WELCOME (0x02). Stores assignedPlayerID / gameID, the player
+; count, our seat index, and advances to the WAITING connection state.
+; Payload: AssignedPlayerID@0 (BE), GameID@2 (BE), PlayerCount@4, GameState@5.
+; -----------------------------------------------------------------------------
+parse_welcome
+        lda     RX_BUFFER+PAYLOAD_START+0    ; AssignedPlayerID @0 (BE)
+        sta     RUBP_PLAYER_ID
+        lda     RX_BUFFER+PAYLOAD_START+1
+        sta     RUBP_PLAYER_ID+1
+        sta     MY_INDEX                     ; low byte = our seat
+        lda     RX_BUFFER+PAYLOAD_START+2    ; GameID @2 (BE)
+        sta     RUBP_GAME_ID
+        lda     RX_BUFFER+PAYLOAD_START+3
+        sta     RUBP_GAME_ID+1
+        lda     RX_BUFFER+PAYLOAD_START+4    ; PlayerCount @4
+        sta     PLAYER_COUNT
+        lda     #CONN_WAITING
+        sta     CONN_STATE
+        rts
+
+; -----------------------------------------------------------------------------
+; process_game_state — GAME_STATE (0x07), the public state summary. Captures
+; the fields the UI needs and, when Flags bit0 is set, latches the 8-byte state
+; hash into OBSERVED_HASH so the next PLAY/DRAW echoes it. GAME_STATE carries no
+; hand; cards arrive via GAME_START / CARD_DRAWN (parse_cards).
+; -----------------------------------------------------------------------------
 process_game_state
-        lda     rx_buffer+16
+        lda     RX_BUFFER+PAYLOAD_START+0    ; CurrentPlayer @0
         sta     CURRENT_TURN
-        lda     rx_buffer+17
+        lda     RX_BUFFER+PAYLOAD_START+1    ; Direction @1
         sta     DIRECTION
-        lda     rx_buffer+18
+        lda     RX_BUFFER+PAYLOAD_START+2    ; TopCard @2
         sta     DISCARD_TOP
-        lda     rx_buffer+19
+        lda     RX_BUFFER+PAYLOAD_START+3    ; NominatedSuit @3
         sta     NOMINATED_SUIT
-        lda     rx_buffer+20
+        lda     RX_BUFFER+PAYLOAD_START+4    ; PendingDraws @4
         sta     PENDING_DRAWS
-        lda     rx_buffer+21
+        lda     RX_BUFFER+PAYLOAD_START+5    ; PendingSkips @5
         sta     PENDING_SKIPS
-        ldx     #rx_buffer+22
+        lda     RX_BUFFER+PAYLOAD_START+6    ; DeckCount @6
+        sta     DECK_COUNT
+
+        ldx     #RX_BUFFER+PAYLOAD_START+7   ; PlayerCardCounts @7-14
         ldy     #PLAYER_COUNTS
         ldb     #8
 pgs_counts
@@ -209,19 +304,56 @@ pgs_counts
         sta     ,y+
         decb
         bne     pgs_counts
-        lda     rx_buffer+30
-        sta     MY_INDEX
-        lda     rx_buffer+31
-        sta     HAND_COUNT
-        ldx     #rx_buffer+32
-        ldy     #MY_HAND
-        ldb     #16
-pgs_hand
+
+        lda     RX_BUFFER+PAYLOAD_START+15   ; IsGameOver @15
+        sta     GAME_OVER
+        lda     RX_BUFFER+PAYLOAD_START+16   ; WinnerIndex @16
+        sta     WINNER_INDEX
+
+        lda     RX_BUFFER+PAYLOAD_START+23   ; Flags @23
+        anda    #$01
+        beq     pgs_no_hash
+        ldx     #RX_BUFFER+PAYLOAD_START+24  ; StateHash @24-31
+        ldy     #OBSERVED_HASH
+        ldb     #8
+pgs_hash
         lda     ,x+
         sta     ,y+
         decb
-        bne     pgs_hand
+        bne     pgs_hash
+        lda     #1
+        sta     HASH_VALID
+pgs_no_hash
         rts
 
-tx_buffer   rmb     64
-rx_buffer   rmb     64
+; -----------------------------------------------------------------------------
+; parse_cards — GAME_START (0x03) / CARD_DRAWN (0x06): the private hand.
+; A = 0 replaces the hand (GAME_START); A != 0 appends (CARD_DRAWN). The hand
+; is clamped to its 16-card capacity. Payload: CardCount@0, Cards@1.. .
+; -----------------------------------------------------------------------------
+parse_cards
+        tsta
+        bne     pc_append
+        clr     HAND_COUNT                   ; replace: fresh hand, clear UI state
+        clr     SELECTED_LO
+        clr     SELECTED_HI
+        clr     CURSOR_POS
+pc_append
+        ldb     RX_BUFFER+PAYLOAD_START+0    ; cards in this message
+        ldx     #RX_BUFFER+PAYLOAD_START+1   ; source
+        ldy     #MY_HAND                     ; destination = MY_HAND + HAND_COUNT
+        lda     HAND_COUNT
+        leay    a,y
+pc_loop
+        tstb
+        beq     pc_done
+        lda     HAND_COUNT
+        cmpa    #16                          ; stop at hand capacity
+        bhs     pc_done
+        lda     ,x+
+        sta     ,y+
+        inc     HAND_COUNT
+        decb
+        bra     pc_loop
+pc_done
+        rts

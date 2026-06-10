@@ -16,7 +16,7 @@ start
 
         ; Connect to server
         jsr     do_connect
-        bcs     conn_failed
+        lbcs    conn_failed
 
         ; Initialize RUBP
         jsr     rubp_init
@@ -30,25 +30,41 @@ start
         ; Main game loop
 main_loop
         jsr     net_recv
-        bcs     ml_no_msg
+        bcs     ml_input
 
         jsr     rubp_validate
-        bcs     ml_no_msg
+        bcs     ml_input
 
-        lda     rx_buffer+6     ; Message type
-        cmpa    #MSG_GAME_STATE
-        bne     ml_check_end
+        jsr     get_message_type
+        cmpa    #MSG_WELCOME
+        bne     ml_not_welcome
+        jsr     parse_welcome
+        bra     ml_input
 
-        jsr     process_game_state
+ml_not_welcome
+        cmpa    #MSG_GAME_START
+        bne     ml_not_start
+        lda     #0                      ; replace hand
+        jsr     parse_cards
         jsr     render_game
         bra     ml_input
 
-ml_check_end
-        cmpa    #MSG_GAME_END
-        bne     ml_no_msg
-        jmp     game_over
+ml_not_start
+        cmpa    #MSG_CARD_DRAWN
+        bne     ml_not_drawn
+        lda     #1                      ; append to hand
+        jsr     parse_cards
+        jsr     render_game
+        bra     ml_input
 
-ml_no_msg
+ml_not_drawn
+        cmpa    #MSG_GAME_STATE
+        bne     ml_input
+        jsr     process_game_state
+        jsr     render_game
+        lda     GAME_OVER               ; GAME_STATE signals end-of-game
+        bne     ml_game_over
+
 ml_input
         ; Check if it's our turn
         lda     CURRENT_TURN
@@ -88,14 +104,17 @@ ml_select
 
 ml_play
         jsr     count_selected
-        beq     main_loop       ; Nothing selected
-        jsr     build_play_msg
-        jsr     net_send
-        bra     main_loop
+        lbeq    main_loop       ; Nothing selected
+        jsr     send_play_cards
+        lbra    main_loop
 
 ml_draw
+        lda     #0              ; reason: cannot play
         jsr     send_draw
-        bra     main_loop
+        lbra    main_loop
+
+ml_game_over
+        jmp     game_over
 
 conn_failed
         jsr     display_clear
@@ -143,74 +162,41 @@ wfg_loop
         bcs     wfg_loop
         jsr     rubp_validate
         bcs     wfg_loop
-        lda     rx_buffer+6
-        cmpa    #MSG_GAME_STATE
+        jsr     get_message_type
+        cmpa    #MSG_WELCOME
+        bne     wfg_not_welcome
+        jsr     parse_welcome
+        bra     wfg_loop
+wfg_not_welcome
+        cmpa    #MSG_GAME_START
         bne     wfg_loop
-        jsr     process_game_state
+        lda     #0                      ; initial hand dealt -> start playing
+        jsr     parse_cards
         rts
 
-rubp_validate
-        lda     rx_buffer
-        cmpa    #'R'
-        bne     rv_fail
-        lda     rx_buffer+1
-        cmpa    #'A'
-        bne     rv_fail
-        lda     rx_buffer+2
-        cmpa    #'C'
-        bne     rv_fail
-        lda     rx_buffer+3
-        cmpa    #'H'
-        bne     rv_fail
-        andcc   #$FE            ; Clear carry
-        rts
-rv_fail
-        orcc    #$01            ; Set carry
-        rts
+; rubp_validate and get_message_type live in rubp.asm.
 
+; count_selected — A = number of selected cards (counts bits in the live
+; SELECTED_LO/HI bitmask that toggle_select and the hand renderer maintain).
 count_selected
-        ldx     #selected_flags
-        ldb     #0
-        lda     HAND_COUNT
-        sta     zp_temp1
-cs_loop
-        tst     ,x+
-        beq     cs_next
-        incb
-cs_next
-        dec     zp_temp1
-        bne     cs_loop
+        clrb                            ; B = count
+        lda     SELECTED_LO
+        bsr     cs_count_byte
+        lda     SELECTED_HI
+        bsr     cs_count_byte
         tfr     b,a
         rts
-
-build_play_msg
-        lda     #MSG_PLAY_CARDS
-        jsr     build_header
-        jsr     count_selected
-        sta     tx_buffer+16
-        lda     nominated_suit
-        sta     tx_buffer+17
-        ldx     #selected_flags
-        ldy     #MY_HAND
-        ldu     #tx_buffer+18
-        ldb     HAND_COUNT
-bpm_loop
-        tst     ,x+
-        beq     bpm_next
-        lda     ,y
-        sta     ,u+
-bpm_next
-        leay    1,y
-        decb
-        bne     bpm_loop
-        ; Clear selection
-        ldx     #selected_flags
-        ldb     #16
-        clra
-bpm_clr
-        sta     ,x+
-        decb
-        bne     bpm_clr
+cs_count_byte
+        tsta
+        beq     cs_byte_done
+cs_byte_loop
+        lsra
+        bcc     cs_byte_skip
+        incb
+cs_byte_skip
+        tsta
+        bne     cs_byte_loop
+cs_byte_done
         rts
 
 ; wait_key is defined in input.asm
@@ -233,9 +219,6 @@ msg_conn_fail   fcc     /CONNECTION FAILED/
 msg_game_over   fcc     /GAME OVER!/
                 fcb     13
                 fcb     0
-
-selected_flags  rmb     16
-zp_temp1        rmb     1
 
 ; -----------------------------------------------------------------------------
 ; Includes

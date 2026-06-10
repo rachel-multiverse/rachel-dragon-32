@@ -59,7 +59,7 @@ net_send
         lda     net_state
         cmpa    #2
         bne     ns_fail
-        ldx     #tx_buffer
+        ldx     #TX_BUFFER
         ldb     #64
 ns_loop
         lda     ,x+
@@ -76,7 +76,7 @@ net_recv
         lda     net_state
         cmpa    #2
         bne     nr_fail
-        ldx     #rx_buffer
+        ldx     #RX_BUFFER
         ldb     #64
 nr_loop
         jsr     recv_byte_timeout
