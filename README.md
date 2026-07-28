@@ -45,10 +45,12 @@ Display uses the VDG (Video Display Generator):
 
 ## Network Protocol
 
-Uses RUBP (Rachel UDP Binary Protocol):
+Uses RUBP (Rachel Unified Binary Protocol):
 - 64-byte fixed-size messages
 - 16-byte header + 48-byte payload
 - Big-endian byte order
+
+Full specification: [rachel-multiverse/protocol](https://github.com/rachel-multiverse/protocol) — also rendered at <https://rachel.stevehill.xyz/protocol>.
 
 ## License
 
