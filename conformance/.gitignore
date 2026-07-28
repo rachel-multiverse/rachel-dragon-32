@@ -2,3 +2,4 @@
 build/
 *.rom
 *.bin
+__pycache__/
