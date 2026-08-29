@@ -1,0 +1,59 @@
+name: Dragon CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dragon-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out client
+        uses: actions/checkout@v6
+
+      - name: Check out canonical protocol
+        uses: actions/checkout@v6
+        with:
+          repository: rachel-multiverse/protocol
+          path: canonical-protocol
+
+      - name: Check out pinned lwtools
+        uses: actions/checkout@v6
+        with:
+          repository: stahta01/LWTools
+          ref: a00d389d0a1e47ea54834649d7cc86d17046b4af
+          path: toolchain/lwtools
+
+      - name: Install lwtools build dependencies
+        run: sudo apt-get update && sudo apt-get install --yes bison build-essential flex
+
+      - name: Build lwtools
+        run: make -C toolchain/lwtools -j2
+
+      - name: Verify protocol fixture is current
+        run: cmp conformance/rubp-messages-v1.json canonical-protocol/specs/fixtures/rubp-messages-v1.json
+
+      - name: Build client
+        env:
+          ASM6809: /nonexistent/asm6809
+          LWASM: ${{ github.workspace }}/toolchain/lwtools/lwasm/lwasm
+        run: make
+
+      - name: Build conformance cartridge
+        run: |
+          export PATH="${{ github.workspace }}/toolchain/lwtools/lwasm:$PATH"
+          python3 conformance/run.py --assemble-only
+
+      - name: Check Python
+        run: python3 -m compileall -q conformance

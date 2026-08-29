@@ -254,6 +254,9 @@ def main():
     print(f"RUBP codec conformance — Dragon client vs {fixtures['fixture']}\n")
     gen_vectors_inc(fixtures)
     assemble()
+    if "--assemble-only" in sys.argv[1:]:
+        print("ASSEMBLE ONLY: conformance cartridge built successfully.")
+        return
     got = capture()
     failed = check_encoders(fixtures, got)
     failed |= check_decoders(fixtures, got)
