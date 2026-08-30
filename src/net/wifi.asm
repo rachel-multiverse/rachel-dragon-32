@@ -24,7 +24,7 @@ ni_fail
 net_connect
         lda     #1
         sta     net_state
-        ; Hayes modem transparent TCP dial: ATD<IPv4>:8765
+        ; Hayes modem transparent TCP dial: ATD<IPv4>:6502
         leax    at_connect,pcr
         jsr     send_string
         ldx     #server_ip
@@ -56,7 +56,7 @@ at_attention fcc    /AT/
              fcb    13,0
 at_connect  fcc     /ATD/
             fcb     0
-at_port     fcc     /:8765/
+at_port     fcc     /:6502/
             fcb     13,0
 
 net_close

@@ -12,7 +12,7 @@ def test_dragon64_6551_contract() -> None:
     assert "lda     #$1E" in SOURCE
     assert "lda     #$0B" in SOURCE
     assert "fcc     /ATD/" in SOURCE
-    assert "fcc     /:8765/" in SOURCE
+    assert "fcc     /:6502/" in SOURCE
 if __name__ == "__main__":
     test_dragon64_6551_contract()
     print("Dragon 64 transport checks passed")
