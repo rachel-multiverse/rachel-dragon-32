@@ -1,11 +1,12 @@
-# Rachel - Dragon 32/Tandy CoCo Client
+# Rachel - Dragon 64 Client
 
-A render-only client for the Rachel card game, written in 6809 assembly for Dragon 32/64 and Tandy Color Computer.
+A network client for the Rachel card game, written in 6809 assembly for the
+Dragon 64.
 
 ## Requirements
 
-- Dragon 32/64 or Tandy CoCo (or emulator like XRoar)
-- DragonWiFi or CoCoSDC with networking
+- Dragon 64 (or an emulator such as XRoar with its 6551 serial port model)
+- Hayes-compatible RS-232 WiFi modem supporting transparent `ATDhost:port`
 - Rachel iOS host application
 
 ## Building
@@ -19,9 +20,11 @@ Requires asm6809 or lwasm cross-assembler.
 ## Features
 
 - 32-column text display
-- TCP/IP networking via DragonWiFi
+- TCP/IP through the Dragon 64's on-board SY6551 and a serial WiFi modem
 - RUBP binary protocol (64-byte messages)
-- Compatible with Dragon and CoCo
+- Dragon 32 and CoCo need the proposed 6551 cartridge described in
+  `docs/dragon32-coco-network-cartridge.md`; they are not supported by the
+  current binary.
 
 ## Architecture
 

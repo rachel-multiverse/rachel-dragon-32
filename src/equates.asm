@@ -1,5 +1,5 @@
 ; =============================================================================
-; DRAGON 32/TANDY COCO EQUATES
+; DRAGON 64 EQUATES
 ; Motorola 6809 Assembly
 ; =============================================================================
 
@@ -19,14 +19,15 @@ PIA1_CA         equ     $FF21           ; PIA 1 Control A
 PIA1_DB         equ     $FF22           ; PIA 1 Data B
 PIA1_CB         equ     $FF23           ; PIA 1 Control B
 
-; DragonWiFi / Serial
-ACIA_CTRL       equ     $FF04           ; ACIA Control
-ACIA_STATUS     equ     $FF04           ; ACIA Status (same address)
-ACIA_DATA       equ     $FF05           ; ACIA Data
+; Dragon 64 on-board SY6551 ACIA (Dragon 32 does not contain this device)
+ACIA_DATA       equ     $FF04
+ACIA_STATUS     equ     $FF05
+ACIA_COMMAND    equ     $FF06
+ACIA_CONTROL    equ     $FF07
 
 ; ACIA Status bits
-ACIA_RDRF       equ     %00000001       ; Receive Data Register Full
-ACIA_TDRE       equ     %00000010       ; Transmit Data Register Empty
+ACIA_RDRF       equ     %00001000       ; Receive Data Register Full
+ACIA_TDRE       equ     %00010000       ; Transmit Data Register Empty
 
 ; Key codes (Dragon keyboard matrix)
 KEY_LEFT        equ     $08             ; Left arrow
@@ -74,7 +75,7 @@ MSG_DRAW_CARD   equ     $05             ; C->H: draw
 MSG_CARD_DRAWN  equ     $06             ; H->C: cards just drawn (private)
 MSG_GAME_STATE  equ     $07             ; H->C: public state summary
 
-; Platform ID (Dragon 32/64 = 0x00A0)
+; Platform ID (Dragon family = 0x00A0)
 PLATFORM_ID_HI  equ     $00
 PLATFORM_ID_LO  equ     $A0
 
